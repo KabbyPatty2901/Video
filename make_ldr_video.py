@@ -450,70 +450,109 @@ def phone_chat(c, x, y, w, h, msgs, t, header="Raka", status="last seen today at
 # Each line: at = earliest local start (s), gap = min pause after previous line,
 # v = voice preset, say = spoken text, sub = on-screen subtitle (None = scene draws
 # its own text), who = speaker label (dialogue only), srt = text for the .srt file.
-VOICES = {
-    "D": ("id-ID-GadisNeural", "+22%", "+0Hz"),      # Dina, narration
-    "Ds": ("id-ID-GadisNeural", "+0%", "-3Hz"),    # Dina, holding back tears
-    "R": ("id-ID-ArdiNeural", "+8%", "-6Hz"),       # Raka, sleepy / hoarse
-}
+VOICE_NAMES = {"D": "id-ID-GadisNeural", "R": "id-ID-ArdiNeural"}
 VO_DIR = os.path.join(OUT_DIR, "vo")
 RAKA_COL = (0.6, 0.75, 1.0)
+
+
+def P(text, v="D", r=15, p=0, vol=0, pause=0.18):
+    """One spoken phrase with its own direction: rate %, pitch Hz, volume %, pause after (s).
+    English words are respelled phonetically for the Indonesian voice
+    (checked with Whisper: e.g. 'atetsmen engsaieti' -> 'attachment anxiety')."""
+    return dict(text=text, v=v, r=r, p=p, vol=vol, pause=pause)
+
+
+# Each line: at = earliest local start (s), gap = min pause after previous line,
+# parts = directed phrases, sub = on-screen subtitle (None/absent = scene draws its
+# own text), who = speaker label (dialogue only), srt = text for the .srt file.
 SPEC = {
     "sc_hook": dict(base=3.0, y=None, lines=[
-        dict(at=0.7, v="D", say="Dia nggak selingkuh. Otakmu yang bikin kamu mikir gitu.")]),
+        dict(at=0.7, srt="Dia nggak selingkuh. Otakmu yang bikin kamu mikir gitu.", parts=[
+            P("Dia nggak selingkuh.", r=10, p=-2, pause=0.3),
+            P("Otakmu, yang bikin kamu mikir gitu.", r=14, p=1)])]),
     "sc_room": dict(base=4.5, y=1700, lines=[
-        dict(at=0.4, v="D", say="Last seen jam sembilan malam. Sekarang, setengah satu pagi.",
-             sub="\u201cLast seen 21.14. Sekarang 00.30.\u201d", srt="Last seen 21.14. Sekarang 00.30."),
-        dict(gap=0.4, v="D", say="Dia ke mana?", sub="\u201cDia ke mana?\u201d")]),
+        dict(at=0.4, sub="\u201cLast seen 21.14. Sekarang 00.30.\u201d", srt="Last seen 21.14. Sekarang 00.30.", parts=[
+            P("Les siin, jam sembilan malam.", r=4, p=-3, vol=-8, pause=0.45),
+            P("Sekarang... setengah satu pagi.", r=0, p=-4, vol=-8)]),
+        dict(gap=0.5, sub="\u201cDia ke mana?\u201d", srt="Dia ke mana?", parts=[
+            P("Dia ke mana?", r=-8, p=-6, vol=-20)])]),
     "sc_popup1": dict(base=1.8, y=None, lines=[
-        dict(at=0.3, v="D", say="Otakmu lagi ngisi kekosongan.")]),
+        dict(at=0.3, srt="Otakmu lagi ngisi kekosongan.", parts=[
+            P("Otakmu lagi ngisi kekosongan.", r=10, p=0)])]),
     "sc_brain": dict(base=5.0, y=1660, lines=[
-        dict(at=0.3, v="D", say="Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri.", sub=True),
-        dict(gap=0.4, v="D", say="Dan biasanya, ceritanya yang paling buruk.", sub=True)]),
+        dict(at=0.3, sub="Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri.", parts=[
+            P("Otak nggak suka blenk.", r=12, p=1, pause=0.3),
+            P("Kalau nggak ada info, dia bikin cerita sendiri.", r=20, p=1)]),
+        dict(gap=0.35, sub="Dan biasanya, ceritanya yang paling buruk.", parts=[
+            P("Dan biasanya...", r=2, p=-3, pause=0.25),
+            P("ceritanya yang paling buruk.", r=4, p=-5, vol=-5)])]),
     "sc_raka": dict(base=3.5, y=None, lines=[
-        dict(at=0.5, v="D", say="Sementara itu, Raka ketiduran. HP-nya mati.")]),
+        dict(at=0.5, srt="Sementara itu, Raka ketiduran. HP-nya mati.", parts=[
+            P("Sementara itu, Raka ketiduran.", r=16, p=1, pause=0.15),
+            P("Hapenya mati.", r=12, p=-2)])]),
     "sc_typing": dict(base=6.0, y=1660, lines=[
-        dict(at=0.3, v="D", say="Ini namanya attachment anxiety.", sub=True),
-        dict(gap=0.5, v="D", say="Makin sedikit kabar, makin keras alarm di kepala bunyi.", sub=True)]),
+        dict(at=0.3, sub="Ini namanya attachment anxiety.", parts=[
+            P("Ini namanya,", r=18, pause=0.05),
+            P("atetsmen engsaieti.", r=4, p=2)]),
+        dict(gap=0.45, sub="Makin sedikit kabar, makin keras alarm di kepala bunyi.", parts=[
+            P("Makin sedikit kabar, makin keras alarm di kepala bunyi.", r=22, p=3, vol=5)])]),
     "sc_call": dict(base=9.0, y=1770, lines=[
-        dict(at=1.9, v="R", say="Maaf, aku ketiduran... Kamu udah makan?", who="RAKA",
-             sub="\u201cMaaf, aku ketiduran. Kamu udah makan?\u201d"),
-        dict(gap=0.45, v="Ds", say="Aku kira kamu mulai bosan.", who="DINA",
-             sub="\u201cAku kira kamu mulai bosan.\u201d"),
-        dict(gap=0.5, v="R", say="Kita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.", who="RAKA",
-             sub="\u201cKita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.\u201d")]),
+        dict(at=1.9, who="RAKA", sub="\u201cMaaf, aku ketiduran. Kamu udah makan?\u201d", parts=[
+            P("Maaf...", v="R", r=-12, p=-8, vol=-5, pause=0.35),
+            P("aku ketiduran.", v="R", r=-6, p=-8, pause=0.4),
+            P("Kamu udah makan?", v="R", r=0, p=-4)]),
+        dict(gap=0.55, who="DINA", sub="\u201cAku kira kamu mulai bosan.\u201d", parts=[
+            P("Aku kira...", r=-14, p=-5, vol=-15, pause=0.55),
+            P("kamu mulai bosan.", r=-18, p=-8, vol=-18)]),
+        dict(gap=0.7, who="RAKA", sub="\u201cKita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.\u201d", parts=[
+            P("Kita bikin aturan kecil aja ya.", v="R", r=4, p=-4, pause=0.35),
+            P("Kabar singkat pun cukup...", v="R", r=0, p=-4, pause=0.2),
+            P("asal ada.", v="R", r=-10, p=-6, vol=-5)])]),
     "sc_truth": dict(base=3.0, y=None, lines=[
-        dict(at=0.3, v="D", say="Kamu nggak ditinggalkan. Kamu cuma kekurangan kepastian.")]),
+        dict(at=0.3, srt="Kamu nggak ditinggalkan. Kamu cuma kekurangan kepastian.", parts=[
+            P("Kamu nggak ditinggalkan.", r=0, p=-2, pause=0.45),
+            P("Kamu cuma kekurangan...", r=6, p=-1, pause=0.15),
+            P("kepastian.", r=-4, p=-2)])]),
     "sc_montage": dict(base=5.0, y=1560, lines=[
-        dict(at=0.3, v="D", say="Studi bilang, pasangan LDR yang punya ritual kecil rutin, justru sering lebih puas dibanding yang dekat.", sub="Studi bilang: pasangan LDR yang punya ritual kecil rutin justru sering lebih puas dibanding pasangan yang dekat."),
-        dict(gap=0.3, v="D", say="Bukan sering ngobrol, tapi konsisten.")]),
+        dict(at=0.3, sub="Studi bilang: pasangan LDR yang punya ritual kecil rutin justru sering lebih puas dibanding pasangan yang dekat.", parts=[
+            P("Studi bilang, pasangan LDR yang punya ritual kecil rutin,", r=22, p=1, pause=0.08),
+            P("justru sering lebih puas dibanding yang dekat.", r=20, p=2)]),
+        dict(gap=0.35, srt="Bukan sering ngobrol, tapi konsisten.", parts=[
+            P("Bukan sering ngobrol,", r=10, pause=0.3),
+            P("tapi konsisten.", r=-2, p=3, vol=5)])]),
     "sc_cta": dict(base=4.0, y=1240, tail=1.4, lines=[
-        dict(at=0.4, v="D", say="Kamu tipe yang mana? Overthinking, atau ketiduran?",
-             sub="\u201cKamu tipe yang mana, overthinking atau ketiduran?\u201d"),
-        dict(gap=0.35, v="D", say="Tag pasanganmu, kasih tahu dia!",
-             sub="\u201cTag pasanganmu, kasih tahu dia.\u201d",
-             srt="Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?")]),
+        dict(at=0.4, sub="\u201cKamu tipe yang mana, overthinking atau ketiduran?\u201d", parts=[
+            P("Kamu tipe yang mana?", r=14, p=4, pause=0.25),
+            P("Overthingking...", r=6, p=3, pause=0.15),
+            P("atau ketiduran?", r=10, p=5)]),
+        dict(gap=0.3, sub="\u201cTag pasanganmu, kasih tahu dia.\u201d",
+             srt="Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?", parts=[
+            P("Teg pasanganmu,", r=16, p=3, pause=0.08),
+            P("kasih tahu dia!", r=14, p=5)])]),
 }
 
 
-def vo_file(line):
+def vo_file(part):
     import hashlib
-    voice, rate, pitch = VOICES[line["v"]]
-    h = hashlib.md5(f"{voice}|{rate}|{pitch}|{line['say']}".encode()).hexdigest()[:10]
-    return os.path.join(VO_DIR, f"{line['v']}_{h}.mp3")
+    key = f"{VOICE_NAMES[part['v']]}|{part['r']}|{part['p']}|{part['vol']}|{part['text']}"
+    return os.path.join(VO_DIR, f"{part['v']}_{hashlib.md5(key.encode()).hexdigest()[:10]}.mp3")
 
 
-def vo_generate(line):
-    path = vo_file(line)
+def vo_generate(part):
+    path = vo_file(part)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return path
     os.makedirs(VO_DIR, exist_ok=True)
-    voice, rate, pitch = VOICES[line["v"]]
-    cmd = ["edge-tts", "--voice", voice, f"--rate={rate}", f"--pitch={pitch}",
-           "--text", line["say"], "--write-media", path]
+    cmd = ["edge-tts", "--voice", VOICE_NAMES[part["v"]], f"--rate={part['r']:+d}%",
+           f"--pitch={part['p']:+d}Hz", f"--volume={part['vol']:+d}%",
+           "--text", part["text"], "--write-media", path]
     if os.environ.get("HTTPS_PROXY"):
         cmd[1:1] = ["--proxy", os.environ["HTTPS_PROXY"]]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
-    return path
+    for attempt in range(4):
+        if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0 \
+                and os.path.getsize(path) > 0:
+            return path
+    raise RuntimeError("TTS failed for: " + part["text"])
 
 
 def load_audio(path, sr=44100):
@@ -532,7 +571,7 @@ def trim_silence(x, thr=0.012, max_pause=0.26, sr=44100):
         return x
     first, last = np.argmax(loud), nfr - 1 - np.argmax(loud[::-1])
     keep = np.zeros(nfr, bool)
-    keep[max(0, first - 3): last + 6] = True
+    keep[max(0, first - 2): last + 3] = True
     run = 0
     maxf = int(max_pause / 0.01)
     for i in range(first, last):
@@ -547,18 +586,34 @@ def trim_silence(x, thr=0.012, max_pause=0.26, sr=44100):
     return y
 
 
+def room_verb(x, sr=44100, wet=0.07):
+    """Very small room reverb so the voice sits in the scene instead of sounding dry."""
+    rng = np.random.default_rng(3)
+    n = int(0.25 * sr)
+    ir = rng.standard_normal(n) * np.exp(-np.arange(n) / (0.05 * sr))
+    ir /= np.sqrt(np.sum(ir ** 2))
+    y = np.convolve(x, ir)[: len(x) + n // 2]
+    out = np.zeros_like(y)
+    out[: len(x)] = x
+    return out * (1 - wet) + y * wet
+
+
 def plan_vo():
-    """Generate VO clips and lay them out; returns scene durations."""
+    """Generate VO phrases, assemble lines and lay them out; returns scene durations."""
     durs = {}
     for name, sp in SPEC.items():
         prev_end = 0.0
         for ln in sp["lines"]:
-            ln["audio"] = trim_silence(load_audio(vo_generate(ln)))
+            chunks = []
+            for part in ln["parts"]:
+                chunks.append(trim_silence(load_audio(vo_generate(part)), max_pause=0.32))
+                chunks.append(np.zeros(int(part["pause"] * 44100)))
+            chunks.pop()
+            ln["audio"] = room_verb(np.concatenate(chunks))
             ln["dur"] = len(ln["audio"]) / 44100
             start = max(ln.get("at", 0.0), prev_end + ln.get("gap", 0.25))
             ln["start"], ln["end"] = start, start + ln["dur"]
-            if ln.get("sub") is True:
-                ln["sub"] = ln["say"]
+            ln["say"] = ln.get("srt") or ln.get("sub") or ""
             prev_end = ln["end"]
         durs[name] = max(sp["base"], prev_end + sp.get("tail", 0.35))
     return durs
@@ -1228,11 +1283,13 @@ def build_audio(path):
     a = np.tanh(a * 1.2)
     a = a / (np.max(np.abs(a)) + 1e-9) * 0.85
     # voice over + ducking of music/SFX under the voice
+    peak = max(np.max(np.abs(l["audio"])) for sp in SPEC.values() for l in sp["lines"])
+    VO_GAIN = 0.92 / peak
     vo = np.zeros(n)
     duck = np.zeros(n)
     for name, sp in SPEC.items():
         for ln in sp["lines"]:
-            x = ln["audio"] / (np.max(np.abs(ln["audio"])) + 1e-9) * 0.92
+            x = ln["audio"] * VO_GAIN
             add(vo, x, st[name] + ln["start"])
             i0 = int((st[name] + ln["start"] - 0.15) * SR)
             duck[max(0, i0): i0 + len(x) + int(0.35 * SR)] = 1
