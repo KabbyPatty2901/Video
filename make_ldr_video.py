@@ -450,15 +450,24 @@ def phone_chat(c, x, y, w, h, msgs, t, header="Raka", status="last seen today at
 # Each line: at = earliest local start (s), gap = min pause after previous line,
 # v = voice preset, say = spoken text, sub = on-screen subtitle (None = scene draws
 # its own text), who = speaker label (dialogue only), srt = text for the .srt file.
-VOICE_NAMES = {"D": "id-ID-GadisNeural", "R": "id-ID-ArdiNeural"}
+VOICE_SET = "multi" if "--multi" in sys.argv else "native"
+VOICE_NAMES = {
+    "native": {"D": "id-ID-GadisNeural", "R": "id-ID-ArdiNeural"},
+    # conversational multilingual voices: speak Indonesian, pronounce English natively
+    "multi": {"D": "en-US-EmmaMultilingualNeural", "R": "en-US-BrianMultilingualNeural"},
+}[VOICE_SET]
+if VOICE_SET == "multi":
+    OUT = os.path.join(OUT_DIR, "ldr_tiktok_multilingual.mp4")
 VO_DIR = os.path.join(OUT_DIR, "vo")
 RAKA_COL = (0.6, 0.75, 1.0)
 
 
-def P(text, v="D", r=15, p=0, vol=0, pause=0.18):
+def P(text, v="D", r=15, p=0, vol=0, pause=0.18, en=None):
     """One spoken phrase with its own direction: rate %, pitch Hz, volume %, pause after (s).
     English words are respelled phonetically for the Indonesian voice
     (checked with Whisper: e.g. 'atetsmen engsaieti' -> 'attachment anxiety')."""
+    if VOICE_SET == "multi":
+        text = en or text
     return dict(text=text, v=v, r=r, p=p, vol=vol, pause=pause)
 
 
@@ -472,7 +481,7 @@ SPEC = {
             P("Otakmu, yang bikin kamu mikir gitu.", r=14, p=1)])]),
     "sc_room": dict(base=4.5, y=1700, lines=[
         dict(at=0.4, sub="\u201cLast seen 21.14. Sekarang 00.30.\u201d", srt="Last seen 21.14. Sekarang 00.30.", parts=[
-            P("Les siin, jam sembilan malam.", r=4, p=-3, vol=-8, pause=0.45),
+            P("Les siin, jam sembilan malam.", en="Last seen, jam sembilan malam.", r=4, p=-3, vol=-8, pause=0.45),
             P("Sekarang... setengah satu pagi.", r=0, p=-4, vol=-8)]),
         dict(gap=0.5, sub="\u201cDia ke mana?\u201d", srt="Dia ke mana?", parts=[
             P("Dia ke mana?", r=-8, p=-6, vol=-20)])]),
@@ -481,7 +490,7 @@ SPEC = {
             P("Otakmu lagi ngisi kekosongan.", r=10, p=0)])]),
     "sc_brain": dict(base=5.0, y=1660, lines=[
         dict(at=0.3, sub="Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri.", parts=[
-            P("Otak nggak suka blenk.", r=12, p=1, pause=0.3),
+            P("Otak nggak suka blenk.", en="Otak nggak suka blank.", r=12, p=1, pause=0.3),
             P("Kalau nggak ada info, dia bikin cerita sendiri.", r=20, p=1)]),
         dict(gap=0.35, sub="Dan biasanya, ceritanya yang paling buruk.", parts=[
             P("Dan biasanya...", r=2, p=-3, pause=0.25),
@@ -493,11 +502,12 @@ SPEC = {
     "sc_typing": dict(base=6.0, y=1660, lines=[
         dict(at=0.3, sub="Ini namanya attachment anxiety.", parts=[
             P("Ini namanya,", r=18, pause=0.05),
-            P("atetsmen engsaieti.", r=4, p=2)]),
+            P("atetsmen engsaieti.", en="attachment anxiety.", r=4, p=2)]),
         dict(gap=0.45, sub="Makin sedikit kabar, makin keras alarm di kepala bunyi.", parts=[
             P("Makin sedikit kabar, makin keras alarm di kepala bunyi.", r=22, p=3, vol=5)])]),
     "sc_call": dict(base=9.0, y=1770, lines=[
         dict(at=1.9, who="RAKA", sub="\u201cMaaf, aku ketiduran. Kamu udah makan?\u201d", parts=[
+            P("Hmm...", v="R", r=-20, p=-10, vol=-12, pause=0.3),
             P("Maaf...", v="R", r=-12, p=-8, vol=-5, pause=0.35),
             P("aku ketiduran.", v="R", r=-6, p=-8, pause=0.4),
             P("Kamu udah makan?", v="R", r=0, p=-4)]),
@@ -515,7 +525,7 @@ SPEC = {
             P("kepastian.", r=-4, p=-2)])]),
     "sc_montage": dict(base=5.0, y=1560, lines=[
         dict(at=0.3, sub="Studi bilang: pasangan LDR yang punya ritual kecil rutin justru sering lebih puas dibanding pasangan yang dekat.", parts=[
-            P("Studi bilang, pasangan LDR yang punya ritual kecil rutin,", r=22, p=1, pause=0.08),
+            P("Studi bilang, pasangan LDR yang punya ritual kecil rutin,", r=17, p=1, pause=0.08),
             P("justru sering lebih puas dibanding yang dekat.", r=20, p=2)]),
         dict(gap=0.35, srt="Bukan sering ngobrol, tapi konsisten.", parts=[
             P("Bukan sering ngobrol,", r=10, pause=0.3),
@@ -523,11 +533,11 @@ SPEC = {
     "sc_cta": dict(base=4.0, y=1240, tail=1.4, lines=[
         dict(at=0.4, sub="\u201cKamu tipe yang mana, overthinking atau ketiduran?\u201d", parts=[
             P("Kamu tipe yang mana?", r=14, p=4, pause=0.25),
-            P("Overthingking...", r=6, p=3, pause=0.15),
+            P("Overthingking...", en="Overthinking...", r=6, p=3, pause=0.15),
             P("atau ketiduran?", r=10, p=5)]),
         dict(gap=0.3, sub="\u201cTag pasanganmu, kasih tahu dia.\u201d",
              srt="Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?", parts=[
-            P("Teg pasanganmu,", r=16, p=3, pause=0.08),
+            P("Teg pasanganmu,", en="Tag pasanganmu,", r=16, p=3, pause=0.08),
             P("kasih tahu dia!", r=14, p=5)])]),
 }
 
@@ -598,6 +608,90 @@ def room_verb(x, sr=44100, wet=0.07):
     return out * (1 - wet) + y * wet
 
 
+# Per-line acoustic treatment and human sounds before the line.
+#   close = intimate close-mic narration, inner = thought / inner-voice echo,
+#   phone = heard through the phone, room = normal room.
+FX = {
+    ("sc_hook", 0): ("close", "in"), ("sc_room", 0): ("close", "in"), ("sc_room", 1): ("close", "in_soft"),
+    ("sc_popup1", 0): ("inner", None), ("sc_brain", 0): ("inner", "in"), ("sc_brain", 1): ("inner", "in_soft"),
+    ("sc_raka", 0): ("close", "in"), ("sc_typing", 0): ("close", "in"), ("sc_typing", 1): ("inner", "in_fast"),
+    ("sc_call", 0): ("phone", "yawn"), ("sc_call", 1): ("close", "sniff"), ("sc_call", 2): ("phone", "in"),
+    ("sc_truth", 0): ("close", "in_soft"), ("sc_montage", 0): ("room", "in"), ("sc_montage", 1): ("room", "in"),
+    ("sc_cta", 0): ("room", "in"), ("sc_cta", 1): ("room", "in_fast"),
+}
+_rng_fx = np.random.default_rng(11)
+
+
+def band(x, lo, hi, sr=44100):
+    X = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    m = np.ones_like(f)
+    if lo:
+        m *= 1 / (1 + (lo / np.maximum(f, 1)) ** 4)
+    if hi:
+        m *= 1 / (1 + (f / hi) ** 4)
+    return np.fft.irfft(X * m, len(x))
+
+
+def reverb(x, decay=0.3, wet=0.1, pre=0.0, sr=44100, seed=3):
+    rng = np.random.default_rng(seed)
+    n = int(decay * 2.5 * sr)
+    ir = rng.standard_normal(n) * np.exp(-np.arange(n) / (decay / 3 * sr))
+    ir = band(ir, 200, 6000)
+    ir /= np.sqrt(np.sum(ir ** 2))
+    pad = int(pre * sr)
+    y = np.convolve(np.concatenate([np.zeros(pad), x]), ir)
+    out = np.zeros(len(x) + n // 2)
+    out[: len(x)] += x * (1 - wet)
+    k = min(len(out), len(y))
+    out[:k] += y[:k] * wet
+    return out
+
+
+def breath(kind, sr=44100):
+    """Synthesized human sounds: inhale, soft inhale, sniffle, sleepy yawn-breath."""
+    if kind is None:
+        return np.zeros(0)
+    dur, lo, hi, amp = {"in": (0.34, 500, 2600, 0.05), "in_soft": (0.42, 400, 2000, 0.035),
+                        "in_fast": (0.2, 600, 3000, 0.045), "yawn": (0.9, 250, 1500, 0.06),
+                        "sniff": (0.14, 1500, 6500, 0.10)}[kind]
+    n = int(dur * sr)
+    nz = band(_rng_fx.standard_normal(n), lo, hi)
+    t = np.linspace(0, 1, n)
+    env = np.sin(np.pi * t ** 0.7) ** 1.5
+    if kind == "yawn":  # inhale then a low voiced sigh
+        env = np.sin(np.pi * t) ** 1.2
+        tt = np.arange(n) / sr
+        sigh = np.sin(2 * np.pi * (140 - 40 * t) * tt) * np.exp(-((t - 0.65) / 0.18) ** 2) * 0.25
+        nz = nz / (np.max(np.abs(nz)) + 1e-9) + sigh
+    y = nz / (np.max(np.abs(nz)) + 1e-9) * env * amp
+    if kind == "sniff":  # two quick sniffs
+        y = np.concatenate([y, np.zeros(int(0.09 * sr)), y * 0.8, np.zeros(int(0.25 * sr))])
+    else:
+        y = np.concatenate([y, np.zeros(int(0.06 * sr))])
+    return y
+
+
+def apply_fx(x, kind):
+    if kind == "close":
+        return reverb(band(x, 70, 11000), decay=0.18, wet=0.05)
+    if kind == "inner":
+        y = band(x, 120, 8000)
+        e = np.zeros(len(y) + int(0.9 * 44100))
+        e[: len(y)] += y
+        for d, g in ((0.16, 0.28), (0.32, 0.14), (0.48, 0.07)):
+            i = int(d * 44100)
+            e[i: i + len(y)] += band(y, 300, 4000) * g
+        return reverb(e, decay=0.9, wet=0.22, pre=0.02)
+    if kind == "phone":
+        y = band(x, 320, 3400)
+        y = y / (np.max(np.abs(y)) + 1e-9)
+        y = np.tanh(y * 2.2) / np.tanh(2.2)
+        y = y + band(_rng_fx.standard_normal(len(y)), 400, 3000) * 0.012
+        return y * np.max(np.abs(x)) * 0.95
+    return reverb(x, decay=0.3, wet=0.08)
+
+
 def plan_vo():
     """Generate VO phrases, assemble lines and lay them out; returns scene durations."""
     durs = {}
@@ -607,10 +701,20 @@ def plan_vo():
             chunks = []
             for part in ln["parts"]:
                 chunks.append(trim_silence(load_audio(vo_generate(part)), max_pause=0.32))
-                chunks.append(np.zeros(int(part["pause"] * 44100)))
+                gap = np.zeros(int(part["pause"] * 44100))
+                if part["pause"] >= 0.3 and part is not ln["parts"][-1]:
+                    b = breath("in_soft") * 0.7  # breathe in during longer pauses
+                    if len(b) < len(gap):
+                        gap[len(gap) - len(b):] += b
+                chunks.append(gap)
             chunks.pop()
-            ln["audio"] = room_verb(np.concatenate(chunks))
-            ln["dur"] = len(ln["audio"]) / 44100
+            idx = sp["lines"].index(ln)
+            fx, pre = FX.get((name, idx), ("room", None))
+            dry = np.concatenate(chunks)
+            ln["audio"] = apply_fx(dry, fx)
+            ln["pre"] = breath(pre)
+            ln["fx"] = fx
+            ln["dur"] = len(dry) / 44100  # echo/reverb tails may ring past the line
             start = max(ln.get("at", 0.0), prev_end + ln.get("gap", 0.25))
             ln["start"], ln["end"] = start, start + ln["dur"]
             ln["say"] = ln.get("srt") or ln.get("sub") or ""
@@ -1277,6 +1381,25 @@ def build_audio(path):
     # big "KONSISTEN" hit + CTA ding
     add(a, tone(523.3, 1.5, 0.15, 2, (1, 0.5, 0.2)), st["sc_montage"] + KONSISTEN_AT)
     ding(st["sc_cta"] + 0.6, 0.25)
+    # night ambience: crickets + room tone from the hook until the call is picked up
+    n0, n1 = st["sc_hook"], st["sc_call"] + 1.7
+    L_ = int((n1 - n0) * SR)
+    tt = np.arange(L_) / SR
+    amb = np.zeros(L_)
+    for f0, period, ph in ((4300, 0.83, 0.0), (4700, 1.07, 0.4), (3900, 1.31, 0.7)):
+        k = ph
+        while k < tt[-1]:
+            for j in range(3):  # 3 pulses per chirp
+                i = int((k + j * 0.045) * SR)
+                m = int(0.03 * SR)
+                if i + m < L_:
+                    amb[i:i + m] += np.sin(2 * np.pi * f0 * tt[:m]) * np.hanning(m) * 0.018
+            k += period * (0.85 + 0.3 * rng.random())
+    brown = np.cumsum(rng.standard_normal(L_))
+    brown = band(brown - np.mean(brown), 40, 300)
+    amb += brown / (np.max(np.abs(brown)) + 1e-9) * 0.03
+    fade = np.minimum(1, tt / 1.0) * np.minimum(1, (tt[-1] - tt) / 0.8)
+    add(a, amb * fade, n0)
     # master fade out + normalize
     fo = int(SR * 1.2)
     a[-fo:] *= np.linspace(1, 0, fo)
@@ -1291,6 +1414,8 @@ def build_audio(path):
         for ln in sp["lines"]:
             x = ln["audio"] * VO_GAIN
             add(vo, x, st[name] + ln["start"])
+            if len(ln["pre"]):
+                add(vo, ln["pre"], max(0, st[name] + ln["start"] - len(ln["pre"]) / SR))
             i0 = int((st[name] + ln["start"] - 0.15) * SR)
             duck[max(0, i0): i0 + len(x) + int(0.35 * SR)] = 1
     k = int(0.12 * SR)
@@ -1363,7 +1488,7 @@ def render(preview_times=None):
 
     wav = os.path.join(OUT_DIR, "_audio.wav")
     build_audio(wav)
-    write_srt(os.path.join(OUT_DIR, "ldr_tiktok.srt"))
+    write_srt(OUT[:-4] + ".srt")
     nframes = int(TOTAL * FPS)
     cmd = ["ffmpeg", "-y", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "bgra", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
