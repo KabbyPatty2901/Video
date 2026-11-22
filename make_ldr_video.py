@@ -446,6 +446,141 @@ def phone_chat(c, x, y, w, h, msgs, t, header="Raka", status="last seen today at
     c.restore()
 
 
+# ---------------------------------------------------------------- voice over
+# Each line: at = earliest local start (s), gap = min pause after previous line,
+# v = voice preset, say = spoken text, sub = on-screen subtitle (None = scene draws
+# its own text), who = speaker label (dialogue only), srt = text for the .srt file.
+VOICES = {
+    "D": ("id-ID-GadisNeural", "+22%", "+0Hz"),      # Dina, narration
+    "Ds": ("id-ID-GadisNeural", "+0%", "-3Hz"),    # Dina, holding back tears
+    "R": ("id-ID-ArdiNeural", "+8%", "-6Hz"),       # Raka, sleepy / hoarse
+}
+VO_DIR = os.path.join(OUT_DIR, "vo")
+RAKA_COL = (0.6, 0.75, 1.0)
+SPEC = {
+    "sc_hook": dict(base=3.0, y=None, lines=[
+        dict(at=0.7, v="D", say="Dia nggak selingkuh. Otakmu yang bikin kamu mikir gitu.")]),
+    "sc_room": dict(base=4.5, y=1700, lines=[
+        dict(at=0.4, v="D", say="Last seen jam sembilan malam. Sekarang, setengah satu pagi.",
+             sub="\u201cLast seen 21.14. Sekarang 00.30.\u201d", srt="Last seen 21.14. Sekarang 00.30."),
+        dict(gap=0.4, v="D", say="Dia ke mana?", sub="\u201cDia ke mana?\u201d")]),
+    "sc_popup1": dict(base=1.8, y=None, lines=[
+        dict(at=0.3, v="D", say="Otakmu lagi ngisi kekosongan.")]),
+    "sc_brain": dict(base=5.0, y=1660, lines=[
+        dict(at=0.3, v="D", say="Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri.", sub=True),
+        dict(gap=0.4, v="D", say="Dan biasanya, ceritanya yang paling buruk.", sub=True)]),
+    "sc_raka": dict(base=3.5, y=None, lines=[
+        dict(at=0.5, v="D", say="Sementara itu, Raka ketiduran. HP-nya mati.")]),
+    "sc_typing": dict(base=6.0, y=1660, lines=[
+        dict(at=0.3, v="D", say="Ini namanya attachment anxiety.", sub=True),
+        dict(gap=0.5, v="D", say="Makin sedikit kabar, makin keras alarm di kepala bunyi.", sub=True)]),
+    "sc_call": dict(base=9.0, y=1770, lines=[
+        dict(at=1.9, v="R", say="Maaf, aku ketiduran... Kamu udah makan?", who="RAKA",
+             sub="\u201cMaaf, aku ketiduran. Kamu udah makan?\u201d"),
+        dict(gap=0.45, v="Ds", say="Aku kira kamu mulai bosan.", who="DINA",
+             sub="\u201cAku kira kamu mulai bosan.\u201d"),
+        dict(gap=0.5, v="R", say="Kita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.", who="RAKA",
+             sub="\u201cKita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.\u201d")]),
+    "sc_truth": dict(base=3.0, y=None, lines=[
+        dict(at=0.3, v="D", say="Kamu nggak ditinggalkan. Kamu cuma kekurangan kepastian.")]),
+    "sc_montage": dict(base=5.0, y=1560, lines=[
+        dict(at=0.3, v="D", say="Studi bilang, pasangan LDR yang punya ritual kecil rutin, justru sering lebih puas dibanding yang dekat.", sub="Studi bilang: pasangan LDR yang punya ritual kecil rutin justru sering lebih puas dibanding pasangan yang dekat."),
+        dict(gap=0.3, v="D", say="Bukan sering ngobrol, tapi konsisten.")]),
+    "sc_cta": dict(base=4.0, y=1240, tail=1.4, lines=[
+        dict(at=0.4, v="D", say="Kamu tipe yang mana? Overthinking, atau ketiduran?",
+             sub="\u201cKamu tipe yang mana, overthinking atau ketiduran?\u201d"),
+        dict(gap=0.35, v="D", say="Tag pasanganmu, kasih tahu dia!",
+             sub="\u201cTag pasanganmu, kasih tahu dia.\u201d",
+             srt="Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?")]),
+}
+
+
+def vo_file(line):
+    import hashlib
+    voice, rate, pitch = VOICES[line["v"]]
+    h = hashlib.md5(f"{voice}|{rate}|{pitch}|{line['say']}".encode()).hexdigest()[:10]
+    return os.path.join(VO_DIR, f"{line['v']}_{h}.mp3")
+
+
+def vo_generate(line):
+    path = vo_file(line)
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return path
+    os.makedirs(VO_DIR, exist_ok=True)
+    voice, rate, pitch = VOICES[line["v"]]
+    cmd = ["edge-tts", "--voice", voice, f"--rate={rate}", f"--pitch={pitch}",
+           "--text", line["say"], "--write-media", path]
+    if os.environ.get("HTTPS_PROXY"):
+        cmd[1:1] = ["--proxy", os.environ["HTTPS_PROXY"]]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+    return path
+
+
+def load_audio(path, sr=44100):
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1",
+                          "-ar", str(sr), "-"], check=True, capture_output=True).stdout
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float64) / 32768.0
+
+
+def trim_silence(x, thr=0.012, max_pause=0.26, sr=44100):
+    """Trim edges and shorten long internal pauses (TikTok pacing)."""
+    hop = int(0.01 * sr)
+    nfr = len(x) // hop
+    rms = np.sqrt(np.mean(x[: nfr * hop].reshape(nfr, hop) ** 2, axis=1))
+    loud = rms > thr
+    if not loud.any():
+        return x
+    first, last = np.argmax(loud), nfr - 1 - np.argmax(loud[::-1])
+    keep = np.zeros(nfr, bool)
+    keep[max(0, first - 3): last + 6] = True
+    run = 0
+    maxf = int(max_pause / 0.01)
+    for i in range(first, last):
+        run = run + 1 if not loud[i] else 0
+        if run > maxf:
+            keep[i] = False
+    out = [x[i * hop:(i + 1) * hop] for i in range(nfr) if keep[i]]
+    y = np.concatenate(out)
+    f = int(0.004 * sr)  # tiny fades to avoid clicks at joins
+    y[:f] *= np.linspace(0, 1, f)
+    y[-f:] *= np.linspace(1, 0, f)
+    return y
+
+
+def plan_vo():
+    """Generate VO clips and lay them out; returns scene durations."""
+    durs = {}
+    for name, sp in SPEC.items():
+        prev_end = 0.0
+        for ln in sp["lines"]:
+            ln["audio"] = trim_silence(load_audio(vo_generate(ln)))
+            ln["dur"] = len(ln["audio"]) / 44100
+            start = max(ln.get("at", 0.0), prev_end + ln.get("gap", 0.25))
+            ln["start"], ln["end"] = start, start + ln["dur"]
+            if ln.get("sub") is True:
+                ln["sub"] = ln["say"]
+            prev_end = ln["end"]
+        durs[name] = max(sp["base"], prev_end + sp.get("tail", 0.35))
+    return durs
+
+
+def L(name, i):
+    ln = SPEC[name]["lines"][i]
+    return ln["start"], ln["end"]
+
+
+def draw_sub(c, name, t, d):
+    sp = SPEC[name]
+    if sp["y"] is None:
+        return
+    lines = sp["lines"]
+    for i, ln in enumerate(lines):
+        nxt = lines[i + 1]["start"] - 0.05 if i + 1 < len(lines) else d
+        if ln.get("sub") and ln["start"] - 0.1 <= t < nxt:
+            subtitle(c, ln["sub"], ease((t - ln["start"] + 0.1) / 0.25), y=sp["y"],
+                     who=ln.get("who"), who_col=RAKA_COL if ln.get("who") == "RAKA" else PINK)
+
+
 # ---------------------------------------------------------------- scenes
 def sc_hook(c, t, T):
     bg_grad(c, (0.02, 0.02, 0.04), NIGHT)
@@ -464,11 +599,13 @@ def sc_hook(c, t, T):
     if 1.0 < t < 1.8:
         glow(c, W / 2 + 300, 760, 120, BLUE, 0.4 * math.sin((t - 1) / 0.8 * math.pi))
     # hook text
-    if t > 1.2:
-        a = ease((t - 1.2) / 0.3)
+    s0, e0 = L("sc_hook", 0)
+    t2 = s0 + (e0 - s0) * 0.42
+    if t > s0:
+        a = ease((t - s0) / 0.3)
         text_c(c, "Dia nggak selingkuh.", W / 2, 1640, 76, WHITE, a, stroke=10)
-    if t > 2.4:
-        a = ease((t - 2.4) / 0.3)
+    if t > t2:
+        a = ease((t - t2) / 0.3)
         text_c(c, "Otakmu yang bikin kamu mikir gitu.", W / 2, 1745, 58, YEL, a, stroke=9, maxw=980)
     # top label
     text_c(c, "Dibaca. Nggak dibalas.", W / 2, 150, 46, (0.75, 0.8, 0.9), ease(t / 0.4))
@@ -546,15 +683,11 @@ def sc_room(c, t, T):
     text_c(c, "last seen 21.14", 300, 230, 44, (0.7, 0.8, 0.9), a1)
     if t > 1.6:
         clock(c, 300, 380, "00.30", ease((t - 1.6) / 0.3))
-    if t > 3.4:
-        a = ease((t - 3.4) / 0.3)
+    q0 = L("sc_room", 1)[0]
+    if t > q0:
+        a = ease((t - q0) / 0.3)
         for i, q in enumerate("???"):
             text_c(c, q, 720 + i * 70 + 8 * math.sin(t * 6 + i), 760 - i * 30, 110, YEL, a)
-    # subtitles
-    if t < 3.4:
-        subtitle(c, "“Last seen 21.14. Sekarang 00.30.”", ease(t / 0.25), y=1700)
-    else:
-        subtitle(c, "“Dia ke mana?”", 1.0, y=1700)
 
 
 def sc_popup1(c, t, T):
@@ -593,7 +726,9 @@ def sc_brain(c, t, T):
                ("Ada orang lain?", 2.2, (250, -330)),
                ("Aku salah ngomong?", 3.4, (-240, 360)),
                ("Dia mau putus?!", 4.4, (240, 440))]
+    sc = SCENE_DUR["sc_brain"] / 6.0
     for txt, at, (dx, dy) in stories:
+        at *= sc
         if t < at:
             continue
         k = back((t - at) / 0.3)
@@ -612,11 +747,6 @@ def sc_brain(c, t, T):
         c.move_to(-tw / 2, 14)
         c.show_text(txt)
         c.restore()
-    if t < 3.0:
-        subtitle(c, "Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri.",
-                 ease(t / 0.25), y=1660, who="DINA (VO)")
-    else:
-        subtitle(c, "Dan biasanya, ceritanya yang paling buruk.", 1.0, y=1660, who="DINA (VO)")
 
 
 def sc_raka(c, t, T):
@@ -760,16 +890,11 @@ def sc_typing(c, t, T):
     # deleted stamp
     if 2.6 < t < 3.4:
         text_c(c, "*dihapus*", W / 2, 1300, 54, (1, 0.5, 0.5), 1.0)
-    if t < 3.0:
-        subtitle(c, "Ini namanya attachment anxiety.", ease(t / 0.25), y=1660, who="DINA (VO)")
-    else:
-        subtitle(c, "Makin sedikit kabar, makin keras alarm di kepala bunyi.", 1.0, y=1660,
-                 who="DINA (VO)")
 
 
 def sc_call(c, t, T):
     # incoming call screen -> accepted call with both faces
-    ring_end = 2.0
+    ring_end = 1.7
     if t < ring_end:
         bg_grad(c, (0.08, 0.15, 0.28), (0.02, 0.04, 0.1))
         for i in range(3):
@@ -808,13 +933,15 @@ def sc_call(c, t, T):
     text_l(c, "DINA", 50, 920, 40, PINK, bold=True)
     # timer
     text_c(c, "00:%02d" % int(lt), W / 2, 90, 40, (0.7, 0.75, 0.8), bold=False)
-    raka_talk = lt < 3.0 or (5.8 < lt < 9.5)
-    dina_talk = 3.2 < lt < 5.6
-    tears = clamp((lt - 3.2) / 1.2) if 3.2 < lt < 9.5 else 0
-    face(c, W / 2, 420, 150, "raka", "smile" if lt > 5.8 else "worried", t,
-         brow=0.3 if lt < 3 else 0)
-    face(c, W / 2, 1230, 150, "dina", "smile" if lt > 8.0 else "sad", t, look=(0, 0.6),
-         tears=tears if lt < 8.0 else 0)
+    (r1s, r1e), (d1s, d1e), (r2s, r2e) = L("sc_call", 0), L("sc_call", 1), L("sc_call", 2)
+    raka_talk = r1s <= t < r1e or r2s <= t < r2e
+    dina_talk = d1s <= t < d1e
+    dina_smile = r2s + (r2e - r2s) * 0.6
+    tears = clamp((t - d1s) / 1.2) if d1s < t < dina_smile else 0
+    face(c, W / 2, 420, 150, "raka", "smile" if t > r2s else "worried", t,
+         brow=0.3 if t < r1e else 0)
+    face(c, W / 2, 1230, 150, "dina", "smile" if t > dina_smile else "sad", t, look=(0, 0.6),
+         tears=tears)
     # sound bars
     for i in range(5):
         if raka_talk:
@@ -827,19 +954,6 @@ def sc_call(c, t, T):
             rgb(c, PINK)
             rrect(c, 900 + i * 22, 1580 - hh, 12, hh, 6)
             c.fill()
-    if lt < 3.0:
-        subtitle(c, "“Maaf, aku ketiduran. Kamu udah makan?”", ease(lt / 0.25), y=1770,
-                 who="RAKA (suara serak)", who_col=(0.6, 0.75, 1.0))
-    elif lt < 5.6:
-        subtitle(c, "“Aku kira kamu mulai bosan.”", 1.0, y=1770, who="DINA (nahan nangis)")
-    elif lt < 6.0:
-        pass
-    else:
-        subtitle(c, "“Kita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.”",
-                 ease((lt - 6.0) / 0.25), y=1770, who="RAKA", who_col=(0.6, 0.75, 1.0))
-    # pop-up truth card in the middle of the call
-    if 5.6 <= lt < 6.0 or False:
-        pass
 
 
 def sc_truth(c, t, T):
@@ -852,10 +966,12 @@ def sc_truth(c, t, T):
         heart(c, x, y, 40 + (i % 3) * 14)
     a1 = ease(t / 0.35)
     text_c(c, "Kamu nggak ditinggalkan.", W / 2, 820, 82, (0.15, 0.12, 0.2), a1, maxw=950)
-    if t > 1.1:
-        a2 = ease((t - 1.1) / 0.35)
+    ts0, te0 = L("sc_truth", 0)
+    t2 = ts0 + (te0 - ts0) * 0.45
+    if t > t2:
+        a2 = ease((t - t2) / 0.35)
         text_c(c, "Kamu cuma kekurangan", W / 2, 1090, 70, (0.35, 0.3, 0.4), a2, maxw=950)
-        s = back((t - 1.5) / 0.4)
+        s = back((t - t2 - 0.7) / 0.4)
         if s > 0:
             c.save()
             c.translate(W / 2, 1270)
@@ -893,7 +1009,8 @@ def sc_montage(c, t, T):
         c.arc(x, y, 4, 0, 2 * math.pi)
         c.fill()
     # rapid cuts every ~1.25s: different "ritual" vignettes
-    cut = int(t / 1.25)
+    cl = SCENE_DUR["sc_montage"] / 5
+    cut = int(t / cl)
     labels = ["Ritual alis naik-turun", "Kabar pagi: “udah bangun!”",
               "Selfie makan siang", "Good night call 5 menit", "Ketawa bareng lagi"]
     # video call frames
@@ -916,7 +1033,7 @@ def sc_montage(c, t, T):
     hs = 50 + 10 * abs(math.sin(t * 5))
     heart(c, W / 2, 600, hs)
     # ritual label (cut-based)
-    k = back((t - cut * 1.25) / 0.25)
+    k = back((t - cut * cl) / 0.25)
     c.save()
     c.translate(W / 2, 1040)
     c.scale(k, k)
@@ -931,12 +1048,10 @@ def sc_montage(c, t, T):
     c.show_text(lb)
     c.restore()
     # stat line
-    if t < 3.2:
-        subtitle(c, "Pasangan LDR yang punya ritual kecil rutin sering lebih puas dibanding pasangan yang dekat.",
-                 ease(t / 0.25), y=1560, who="DINA (VO)")
-    else:
-        subtitle(c, "Bukan sering ngobrol, tapi", 1.0, y=1480, who="DINA (VO)")
-        s = back((t - 3.4) / 0.35)
+    ms, me = L("sc_montage", 1)
+    if t >= ms - 0.1:
+        subtitle(c, "Bukan sering ngobrol, tapi", 1.0, y=1480)
+        s = back((t - KONSISTEN_AT) / 0.35)
         if s > 0:
             c.save()
             c.translate(W / 2, 1720)
@@ -957,11 +1072,6 @@ def sc_cta(c, t, T):
     bg_grad(c, (1.0, 0.86, 0.80), (0.98, 0.70, 0.75))
     glow(c, W / 2, 700, 600, WHITE, 0.4)
     face(c, W / 2, 640, 210, "dina", "smile", t, look=(0, 0))
-    if t < 2.6:
-        subtitle(c, "“Kamu tipe yang mana, overthinking atau ketiduran?”", ease(t / 0.25), y=1240,
-                 who="DINA")
-    else:
-        subtitle(c, "“Tag pasanganmu, kasih tahu dia.”", 1.0, y=1240, who="DINA")
     # vote buttons
     k = back((t - 0.6) / 0.35)
     if k > 0:
@@ -994,7 +1104,11 @@ SCENES = [  # (fn, duration)
     (sc_montage, 6.3),
     (sc_cta, 5.0),
 ]
+SCENE_DUR = plan_vo()
+SCENES = [(fn, SCENE_DUR[fn.__name__]) for fn, _ in SCENES]
 TOTAL = sum(d for _, d in SCENES)
+_ms, _me = L("sc_montage", 1)
+KONSISTEN_AT = _ms + (_me - _ms) * 0.62
 
 
 def scene_starts():
@@ -1106,13 +1220,26 @@ def build_audio(path):
             add(a, 0.05 * rng.standard_normal(L) * np.exp(-np.arange(L) / 150), at + 0.25)
         k += 1
     # big "KONSISTEN" hit + CTA ding
-    add(a, tone(523.3, 1.5, 0.15, 2, (1, 0.5, 0.2)), st["sc_montage"] + 3.4)
+    add(a, tone(523.3, 1.5, 0.15, 2, (1, 0.5, 0.2)), st["sc_montage"] + KONSISTEN_AT)
     ding(st["sc_cta"] + 0.6, 0.25)
     # master fade out + normalize
     fo = int(SR * 1.2)
     a[-fo:] *= np.linspace(1, 0, fo)
     a = np.tanh(a * 1.2)
     a = a / (np.max(np.abs(a)) + 1e-9) * 0.85
+    # voice over + ducking of music/SFX under the voice
+    vo = np.zeros(n)
+    duck = np.zeros(n)
+    for name, sp in SPEC.items():
+        for ln in sp["lines"]:
+            x = ln["audio"] / (np.max(np.abs(ln["audio"])) + 1e-9) * 0.92
+            add(vo, x, st[name] + ln["start"])
+            i0 = int((st[name] + ln["start"] - 0.15) * SR)
+            duck[max(0, i0): i0 + len(x) + int(0.35 * SR)] = 1
+    k = int(0.12 * SR)
+    duck = np.convolve(duck, np.ones(k) / k, mode="same")
+    a = a * (0.8 - 0.5 * duck) + vo
+    a = np.tanh(a * 1.1) * 0.95
     pcm = (a * 32767).astype(np.int16)
     stereo = np.repeat(pcm[:, None], 2, axis=1)
     with wave.open(path, "wb") as wf:
@@ -1123,34 +1250,21 @@ def build_audio(path):
 
 
 # ---------------------------------------------------------------- subtitles (SRT) for editing apps
-SRT = [
-    (0.0, 4.0, "Dia nggak selingkuh. Otakmu yang bikin kamu mikir gitu."),
-    (4.0, 7.4, "Last seen 21.14. Sekarang 00.30."),
-    (7.4, 10.0, "Dia ke mana?"),
-    (10.0, 12.2, "Otakmu lagi ngisi kekosongan."),
-    (12.2, 15.2, "Otak nggak suka blank. Kalau nggak ada info, dia bikin cerita sendiri."),
-    (15.2, 18.2, "Dan biasanya, ceritanya yang paling buruk."),
-    (18.2, 22.4, "(Sementara itu: Raka ketiduran, HP mati.)"),
-    (22.4, 25.4, "Ini namanya attachment anxiety."),
-    (25.4, 28.6, "Makin sedikit kabar, makin keras alarm di kepala bunyi."),
-    (30.6, 33.6, "RAKA: Maaf, aku ketiduran. Kamu udah makan?"),
-    (33.8, 36.2, "DINA: Aku kira kamu mulai bosan."),
-    (36.6, 40.2, "RAKA: Kita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada."),
-    (40.2, 43.8, "Kamu nggak ditinggalkan. Kamu cuma kekurangan kepastian."),
-    (43.8, 47.0, "Pasangan LDR yang punya ritual kecil rutin sering lebih puas dibanding pasangan yang dekat."),
-    (47.0, 50.1, "Bukan sering ngobrol, tapi konsisten."),
-    (50.1, 52.7, "Kamu tipe yang mana, overthinking atau ketiduran?"),
-    (52.7, 55.1, "Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?"),
-]
-
-
 def write_srt(path):
     def ts(x):
         ms = int(round(x * 1000))
         return "%02d:%02d:%02d,%03d" % (ms // 3600000, ms // 60000 % 60, ms // 1000 % 60, ms % 1000)
     with open(path, "w", encoding="utf-8") as f:
-        for i, (a, b, txt) in enumerate(SRT, 1):
-            f.write(f"{i}\n{ts(a)} --> {ts(b)}\n{txt}\n\n")
+        st = {fn.__name__: s0 for fn, s0, d in scene_starts()}
+        i = 0
+        for name, sp in SPEC.items():
+            for ln in sp["lines"]:
+                i += 1
+                txt = ln.get("srt") or (ln["sub"].strip("\u201c\u201d") if isinstance(ln.get("sub"), str) else ln["say"])
+                if ln.get("who"):
+                    txt = ln["who"] + ": " + txt
+                a, b = st[name] + ln["start"], st[name] + ln["end"] + 0.3
+                f.write(f"{i}\n{ts(a)} --> {ts(b)}\n{txt}\n\n")
 
 
 # ---------------------------------------------------------------- render
@@ -1170,6 +1284,7 @@ def render(preview_times=None):
                 c.paint()
                 c.set_operator(cairo.OPERATOR_OVER)
                 fn(c, lt, T)
+                draw_sub(c, fn.__name__, lt, d)
                 c.restore()
                 # quick flash-cut transition
                 if lt < 0.12 and s > 0:
