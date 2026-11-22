@@ -466,8 +466,8 @@ def P(text, v="D", r=15, p=0, vol=0, pause=0.18, en=None):
     """One spoken phrase with its own direction: rate %, pitch Hz, volume %, pause after (s).
     English words are respelled phonetically for the Indonesian voice
     (checked with Whisper: e.g. 'atetsmen engsaieti' -> 'attachment anxiety')."""
-    if VOICE_SET == "multi":
-        text = en or text
+    if VOICE_SET == "multi" and en is not None:
+        text = en  # "" = merged into the previous phrase, "a|b" = split by language
     return dict(text=text, v=v, r=r, p=p, vol=vol, pause=pause)
 
 
@@ -481,7 +481,7 @@ SPEC = {
             P("Otakmu, yang bikin kamu mikir gitu.", r=14, p=1)])]),
     "sc_room": dict(base=4.5, y=1700, lines=[
         dict(at=0.4, sub="\u201cLast seen 21.14. Sekarang 00.30.\u201d", srt="Last seen 21.14. Sekarang 00.30.", parts=[
-            P("Les siin, jam sembilan malam.", en="Last seen, jam sembilan malam.", r=4, p=-3, vol=-8, pause=0.45),
+            P("Les siin, jam sembilan malam.", en="Last seen,|jam sembilan malam.", r=4, p=-3, vol=-8, pause=0.45),
             P("Sekarang... setengah satu pagi.", r=0, p=-4, vol=-8)]),
         dict(gap=0.5, sub="\u201cDia ke mana?\u201d", srt="Dia ke mana?", parts=[
             P("Dia ke mana?", r=-8, p=-6, vol=-20)])]),
@@ -508,38 +508,64 @@ SPEC = {
     "sc_call": dict(base=9.0, y=1770, lines=[
         dict(at=1.9, who="RAKA", sub="\u201cMaaf, aku ketiduran. Kamu udah makan?\u201d", parts=[
             P("Hmm...", v="R", r=-20, p=-10, vol=-12, pause=0.3),
-            P("Maaf...", v="R", r=-12, p=-8, vol=-5, pause=0.35),
-            P("aku ketiduran.", v="R", r=-6, p=-8, pause=0.4),
+            P("Maaf...", v="R", r=-12, p=-8, vol=-5, pause=0.35, en="Maaf... aku ketiduran."),
+            P("aku ketiduran.", v="R", r=-6, p=-8, pause=0.4, en=""),
             P("Kamu udah makan?", v="R", r=0, p=-4)]),
         dict(gap=0.55, who="DINA", sub="\u201cAku kira kamu mulai bosan.\u201d", parts=[
-            P("Aku kira...", r=-14, p=-5, vol=-15, pause=0.55),
-            P("kamu mulai bosan.", r=-18, p=-8, vol=-18)]),
+            P("Aku kira...", r=-14, p=-5, vol=-15, pause=0.55, en="Aku kira... kamu mulai bosan."),
+            P("kamu mulai bosan.", r=-18, p=-8, vol=-18, en="")]),
         dict(gap=0.7, who="RAKA", sub="\u201cKita bikin aturan kecil aja ya. Kabar singkat pun cukup, asal ada.\u201d", parts=[
             P("Kita bikin aturan kecil aja ya.", v="R", r=4, p=-4, pause=0.35),
             P("Kabar singkat pun cukup...", v="R", r=0, p=-4, pause=0.2),
             P("asal ada.", v="R", r=-10, p=-6, vol=-5)])]),
     "sc_truth": dict(base=3.0, y=None, lines=[
         dict(at=0.3, srt="Kamu nggak ditinggalkan. Kamu cuma kekurangan kepastian.", parts=[
-            P("Kamu nggak ditinggalkan.", r=0, p=-2, pause=0.45),
-            P("Kamu cuma kekurangan...", r=6, p=-1, pause=0.15),
-            P("kepastian.", r=-4, p=-2)])]),
+            P("Kamu nggak ditinggalkan.", r=0, p=-2, pause=0.45,
+              en="Kamu nggak ditinggalkan. Kamu cuma kekurangan... kepastian."),
+            P("Kamu cuma kekurangan...", r=6, p=-1, pause=0.15, en=""),
+            P("kepastian.", r=-4, p=-2, en="")])]),
     "sc_montage": dict(base=5.0, y=1560, lines=[
         dict(at=0.3, sub="Studi bilang: pasangan LDR yang punya ritual kecil rutin justru sering lebih puas dibanding pasangan yang dekat.", parts=[
             P("Studi bilang, pasangan LDR yang punya ritual kecil rutin,", r=17, p=1, pause=0.08),
             P("justru sering lebih puas dibanding yang dekat.", r=20, p=2)]),
         dict(gap=0.35, srt="Bukan sering ngobrol, tapi konsisten.", parts=[
-            P("Bukan sering ngobrol,", r=10, pause=0.3),
-            P("tapi konsisten.", r=-2, p=3, vol=5)])]),
+            P("Bukan sering ngobrol,", r=10, pause=0.3, en="Bukan sering ngobrol, tapi konsisten."),
+            P("tapi konsisten.", r=-2, p=3, vol=5, en="")])]),
     "sc_cta": dict(base=4.0, y=1240, tail=1.4, lines=[
         dict(at=0.4, sub="\u201cKamu tipe yang mana, overthinking atau ketiduran?\u201d", parts=[
             P("Kamu tipe yang mana?", r=14, p=4, pause=0.25),
             P("Overthingking...", en="Overthinking...", r=6, p=3, pause=0.15),
             P("atau ketiduran?", r=10, p=5)]),
-        dict(gap=0.3, sub="\u201cTag pasanganmu, kasih tahu dia.\u201d",
-             srt="Tag pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?", parts=[
-            P("Teg pasanganmu,", en="Tag pasanganmu,", r=16, p=3, pause=0.08),
-            P("kasih tahu dia!", r=14, p=5)])]),
+        dict(gap=0.3, sub=("\u201cYuk, tag pasanganmu, kasih tahu dia.\u201d" if VOICE_SET == "multi"
+                           else "\u201cTag pasanganmu, kasih tahu dia.\u201d"),
+             srt=("Yuk, tag" if VOICE_SET == "multi" else "Tag") +
+                 " pasanganmu, kasih tahu dia. Komen: tim Dina atau tim Raka?", parts=[
+            P("Teg pasanganmu,", en="Yuk, tag pasanganmu, kasih tahu dia!", r=16, p=3, pause=0.08),
+            P("kasih tahu dia!", r=14, p=5, en="")])]),
 }
+
+
+def _language_split(spec):
+    """Multilingual voices guess the language per request, so English words get
+    their own request and short Indonesian fragments are merged into longer ones."""
+    for sp in spec.values():
+        for ln in sp["lines"]:
+            out = []
+            for part in ln["parts"]:
+                if part["text"] == "":
+                    out[-1]["pause"] = part["pause"]
+                    continue
+                pieces = part["text"].split("|")
+                for k, piece in enumerate(pieces):
+                    q = dict(part, text=piece.strip())
+                    if k < len(pieces) - 1:
+                        q["pause"] = 0.04
+                    out.append(q)
+            ln["parts"] = out
+
+
+if VOICE_SET == "multi":
+    _language_split(SPEC)
 
 
 def vo_file(part):
