@@ -265,55 +265,198 @@ BABBLE_ORDER = ["D4", "D3", "D6", "D2", "D4", "D3", "D6", "D4", "D2", "D3"]
 
 
 def babble(dur, offset=0):
-    parts, n = [], 0
+    """Returns (audio, [(offset_s, clip_id), ...]) so the mouth can follow it."""
+    parts, n, place = [], 0, []
     k = offset
     while n < dur * SR:
-        a, b, _ = CLIPS[BABBLE_ORDER[k % len(BABBLE_ORDER)]]
+        cid = BABBLE_ORDER[k % len(BABBLE_ORDER)]
+        a, b, _ = CLIPS[cid]
         x = load(REC, a, b)
+        place.append((n / SR, cid))
         parts += [x, np.zeros(int(0.16 * SR))]
         n += len(x) + int(0.16 * SR)
         k += 1
     y = np.concatenate(parts)[: int(dur * SR)]
     f = int(0.3 * SR)
     y[-f:] *= np.linspace(1, 0, f)
-    return y
+    return y, place
 
 
-BABBLE = []  # (global_start, raw, fx)
+BABBLE = []  # (global_start, raw, fx, placements)
 _s = SC["keluar_jiwa"]
-BABBLE.append((SC["hook"]["t0"] + 0.2, babble(SC["hook"]["dur"] - 0.2, 4), "veryfar"))
-BABBLE.append((_s["t0"] + 0.1, babble(E("keluar_jiwa", "S2")[0] - 0.35, 0), "far"))
-BABBLE.append((SC["klimaks"]["t0"] + 0.5, babble(SC["klimaks"]["dur"] - 0.5, 2), "far"))
+for _at, _dur, _off, _kind in ((SC["hook"]["t0"] + 0.2, SC["hook"]["dur"] - 0.2, 4, "veryfar"),
+                               (_s["t0"] + 0.1, E("keluar_jiwa", "S2")[0] - 0.35, 0, "far"),
+                               (SC["klimaks"]["t0"] + 0.5, SC["klimaks"]["dur"] - 0.5, 2, "far")):
+    _y, _pl = babble(_dur, _off)
+    BABBLE.append((_at, _y, _kind, _pl))
 
-# lip-sync envelopes over the whole video (100 Hz)
-NENV = int(TOTAL * 100) + 200
-ENV = {k: np.zeros(NENV) for k in ("sasa", "dinda", "barista", "dinda_text")}
+# ------------------------------------------------------------------ lip sync (visemes)
+# Whisper gives the timing of every word in each clip (cached in vo/visemes.json).
+# Indonesian is written the way it is spoken, so each letter maps to a mouth shape.
+# Shape = (open, width, round, teeth).  Loudness still scales how wide it opens,
+# and the mouth closes in silences.
+VISEME = {
+    "A": (1.00, 1.00, 0.0, 0.25),   # a        jaw dropped
+    "E": (0.58, 1.14, 0.0, 0.70),   # e        mid, spread
+    "I": (0.34, 1.24, 0.0, 1.00),   # i y      spread, teeth
+    "O": (0.74, 0.70, 1.0, 0.10),   # o        rounded
+    "U": (0.42, 0.52, 1.0, 0.00),   # u w      small round
+    "M": (0.00, 0.94, 0.0, 0.00),   # m b p    lips pressed
+    "F": (0.14, 1.00, 0.0, 1.00),   # f v      teeth on lower lip
+    "C": (0.28, 1.06, 0.0, 0.85),   # other consonants
+}
+VIS_JSON = os.path.join(HERE, "vo", "visemes.json")
+_NUM = ["nol", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan"]
 
 
-def _env_add(who, x, at, gain=1.0):
-    e = env100(x) * gain
-    i = int(at * 100)
-    j = min(NENV, i + len(e))
+def num_id(n):
+    n = int(n)
+    if n < 10:
+        return _NUM[n]
+    if n < 20:
+        return "sepuluh" if n == 10 else "sebelas" if n == 11 else _NUM[n - 10] + " belas"
+    return _NUM[n // 10] + " puluh" + ("" if n % 10 == 0 else " " + _NUM[n % 10])
+
+
+def letters_to_visemes(word):
+    import re
+    w = re.sub(r"\d+", lambda m: num_id(m.group()), word.lower())
+    w = re.sub(r"[^a-z]", "", w)
+    out, i = [], 0
+    while i < len(w):
+        two = w[i:i + 2]
+        if two in ("ng", "ny", "kh", "sy"):
+            out.append(("C", 1.0))
+            i += 2
+            continue
+        ch = w[i]
+        v = {"a": "A", "e": "E", "i": "I", "y": "I", "o": "O", "u": "U", "w": "U",
+             "m": "M", "b": "M", "p": "M", "f": "F", "v": "F"}.get(ch, "C")
+        weight = 2.0 if v in "AEIOU" and ch not in "yw" else 1.0
+        if ch == "h" and i == len(w) - 1:
+            weight = 0.4
+        out.append((v, weight))
+        i += 1
+    return out
+
+
+def align_clips():
+    """Word timestamps for every clip, cached so rendering does not need Whisper."""
+    import json
+    cache = json.load(open(VIS_JSON)) if os.path.exists(VIS_JSON) else {}
+    todo = {}
+    for sc in SCENES:
+        for ev in sc["ev"]:
+            todo[ev["id"]] = (ev["raw"], ev["text"])
+    for cid in CLIPS:
+        if cid not in todo:
+            a, b, txt = CLIPS[cid]
+            todo[cid] = (load(REC, a, b), txt)
+    missing = [k for k, (x, _) in todo.items() if cache.get(k, {}).get("n") != len(x)]
+    if missing:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("small", device="cpu", compute_type="int8")
+        for k in missing:
+            x, txt = todo[k]
+            x16 = np.interp(np.arange(0, len(x), SR / 16000), np.arange(len(x)), x).astype(np.float32)
+            segs, _ = model.transcribe(x16, language="id", word_timestamps=True, beam_size=5,
+                                       initial_prompt=txt)
+            words = [(w.word.strip(), w.start, w.end) for sg in segs for w in sg.words]
+            cache[k] = {"n": len(x), "words": words}
+        json.dump(cache, open(VIS_JSON, "w"), indent=1, ensure_ascii=False)
+    return cache
+
+
+ALIGN = align_clips()
+
+
+def viseme_track(cid, x):
+    """(open, width, round, teeth) at 100 Hz for one clip."""
+    n = len(x) // (SR // 100) + 1
+    key = np.zeros((n, 4))
+    key[:, 1] = 1.0
+    frames, targets = [], []
+    for word, ws, we in ALIGN[cid]["words"]:
+        vs = letters_to_visemes(word)
+        if not vs:
+            continue
+        tot = sum(wt for _, wt in vs)
+        t = ws
+        for v, wt in vs:
+            d = (we - ws) * wt / tot
+            frames.append(t + d * 0.5)
+            targets.append(VISEME[v])
+            t += d
+        frames.append(we + 0.03)
+        targets.append((0.0, 1.0, 0.0, 0.0))
+    if frames:
+        tt = np.arange(n) / 100
+        fr = np.array(frames)
+        tg = np.array(targets)
+        for j in range(4):  # coarticulation: glide between letter targets
+            key[:, j] = np.interp(tt, fr, tg[:, j], left=(0 if j != 1 else 1), right=(0 if j != 1 else 1))
+    # loudness: open wider on stressed/loud parts, close in silences
+    e = env100(x)
+    e = e / (np.percentile(e, 95) + 1e-9)
+    amp = np.clip((e - 0.06) / 0.5, 0, 1)
+    amp = np.concatenate([amp, np.zeros(max(0, n - len(amp)))])[:n]
+    key[:, 0] *= (0.6 + 0.55 * amp) * np.clip(amp / 0.1, 0, 1)
+    k = np.ones(3) / 3
+    key[:, 0] = np.convolve(key[:, 0], k, mode="same")
+    return key
+
+
+NENV = int(TOTAL * 100) + 400
+VIS = {k: np.zeros((NENV, 4)) for k in ("sasa", "dinda", "barista", "dinda_text")}
+ACTIVE = {k: np.zeros(NENV, bool) for k in VIS}
+for k in VIS:
+    VIS[k][:, 1] = 1.0
+
+
+def _vis_add(who, cid, x, at):
+    tr = viseme_track(cid, x)
+    i = int(round(at * 100))
+    j = min(NENV, i + len(tr))
     if j > i:
-        ENV[who][i:j] = np.maximum(ENV[who][i:j], e[: j - i])
+        seg = tr[: j - i]
+        better = seg[:, 0] >= VIS[who][i:j, 0]
+        VIS[who][i:j][better] = seg[better]
+        ACTIVE[who][i:j] = True
 
 
 for sc in SCENES:
     for ev in sc["ev"]:
-        _env_add(ev["who"], ev["raw"], sc["t0"] + ev["start"])
-for at, raw, kind in BABBLE:
-    _env_add("dinda", raw, at, 1.0)
-for k in ENV:
-    m = np.percentile(ENV[k][ENV[k] > 0], 95) if (ENV[k] > 0).any() else 1
-    ENV[k] = np.clip(ENV[k] / (m + 1e-9), 0, 1)
+        _vis_add(ev["who"], ev["id"], ev["raw"], sc["t0"] + ev["start"])
+for at, raw, kind, place in BABBLE:
+    for off, cid in place:
+        a, b, _ = CLIPS[cid]
+        _vis_add("dinda", cid, load(REC, a, b), at + off)
+        # babble is cut at the end of its segment
+    end = at + len(raw) / SR
+    ie = int(end * 100)
+    VIS["dinda"][ie: ie + 300, 0] = 0.0
+    ACTIVE["dinda"][ie: ie + 300] = False
 
 
-def mouth(who, T):
+class Vis(float):
+    """Mouth openness (float, so old code keeps working) + shape details."""
+    def __new__(cls, h, w=1.0, rnd=0.0, teeth=0.0, active=False):
+        o = float.__new__(cls, h)
+        o.w, o.rnd, o.teeth, o.active = w, rnd, teeth, active
+        return o
+
+
+SCENE_T0 = [0.0]  # start of the scene being drawn (scene code passes local time)
+
+
+def mouth(who, t):
+    T = t + SCENE_T0[0]
     i = int(T * 100)
-    if 0 <= i < NENV:
-        v = ENV[who][i]
-        return clamp((v - 0.12) / 0.6)
-    return 0.0
+    if 0 <= i < NENV - 1:
+        f = T * 100 - i
+        v = VIS[who][i] * (1 - f) + VIS[who][i + 1] * f
+        return Vis(float(v[0]), float(v[1]), float(v[2]), float(v[3]), bool(ACTIVE[who][i]))
+    return Vis(0.0)
 
 
 # ================================================================== drawing helpers
@@ -593,20 +736,27 @@ def person(c, cx, cy, r, who, mood="neutral", T=0.0, talk=0.0, look=(0, 0), brow
             c.move_to(x - r * 0.16, by + r * 0.02)
             c.curve_to(x - r * 0.05, by - r * 0.05, x + r * 0.05, by - r * 0.05, x + r * 0.16, by + r * 0.02)
         c.stroke()
-    # mouth (talk = 0..1 from the audio envelope)
+    # mouth: viseme-driven (open, width, round, teeth) or a mood shape at rest
     my = cy + r * 0.58
-    if talk > 0.05:
-        ow = r * (0.17 + 0.12 * talk)
-        oh = r * (0.05 + 0.22 * talk)
-        if mood == "whisper":
-            ow, oh = ow * 0.7, oh * 0.6
-        rgb(c, (0.35, 0.08, 0.1))
-        ellipse(c, cx, my, ow, oh)
-        c.fill()
-        if oh > r * 0.1:
-            rgb(c, (0.85, 0.4, 0.42))
-            ellipse(c, cx, my + oh * 0.45, ow * 0.6, oh * 0.4)
-            c.fill()
+    h = float(talk)
+    wv = getattr(talk, "w", 1.0)
+    rnd = getattr(talk, "rnd", 0.0)
+    teeth = getattr(talk, "teeth", 0.0)
+    active = getattr(talk, "active", h > 0.05)
+    if mood == "whisper":
+        h, wv = h * 0.55, wv * 0.85
+    lift = r * 0.045 if mood in ("smile", "excited", "smirk") else (-r * 0.03 if mood == "sad" else 0)
+    if active and h > 0.04:
+        draw_mouth(c, cx, my, r, h, wv, rnd, teeth, lift, mood == "smirk")
+    elif active:
+        # lips pressed together (m / b / p, or a tiny pause inside a word)
+        hw = r * 0.17 * wv
+        rgb(c, (0.62, 0.25, 0.26))
+        c.set_line_width(r * 0.075)
+        c.set_line_cap(cairo.LINE_CAP_ROUND)
+        c.move_to(cx - hw, my - lift)
+        c.curve_to(cx - hw * 0.4, my + r * 0.015, cx + hw * 0.4, my + r * 0.015, cx + hw, my - lift)
+        c.stroke()
     else:
         rgb(c, (0.42, 0.13, 0.14))
         c.set_line_width(r * 0.055)
@@ -621,9 +771,7 @@ def person(c, cx, cy, r, who, mood="neutral", T=0.0, talk=0.0, look=(0, 0), brow
             c.arc(cx, my + r * 0.18, r * 0.17, 1.2 * math.pi, 1.8 * math.pi)
             c.stroke()
         elif mood == "open":
-            rgb(c, (0.35, 0.08, 0.1))
-            ellipse(c, cx, my, r * 0.12, r * 0.14)
-            c.fill()
+            draw_mouth(c, cx, my, r, 0.55, 0.75, 0.8, 0.2, 0, False)
         elif mood in ("blank", "flat"):
             c.move_to(cx - r * 0.14, my)
             c.line_to(cx + r * 0.14, my)
@@ -642,6 +790,49 @@ def person(c, cx, cy, r, who, mood="neutral", T=0.0, talk=0.0, look=(0, 0), brow
             c.curve_to(x - r * 0.05, ty + r * 0.06, x - r * 0.06, ty, x, ty - r * 0.1)
             c.fill()
     c.restore()
+
+
+def draw_mouth(c, cx, my, r, h, w, rnd, teeth, lift=0.0, smirk=False):
+    """Articulated cartoon mouth.  h: jaw opening 0..1, w: width factor,
+    rnd: lip rounding 0..1 (o/u), teeth: how much teeth show 0..1."""
+    h = clamp(h, 0, 1.1)
+    hw = r * 0.23 * w * (1 - 0.3 * rnd)                 # half width
+    up = r * (0.045 + 0.11 * h) * (1 + 0.35 * rnd)       # upper lip rise
+    dn = r * (0.04 + 0.36 * h) * (1 + 0.1 * rnd)         # jaw drop
+    sk = r * 0.04 if smirk else 0.0
+    k = 0.55 + 0.35 * rnd                                # rounder controls for o/u
+    lx, rx = cx - hw, cx + hw
+    ly, ry = my - lift + sk, my - lift - sk
+    def outline():
+        c.new_path()
+        c.move_to(lx, ly)
+        c.curve_to(cx - hw * k, my - up, cx + hw * k, my - up, rx, ry)
+        c.curve_to(cx + hw * k, my + dn, cx - hw * k, my + dn, lx, ly)
+        c.close_path()
+    outline()
+    rgb(c, (0.32, 0.07, 0.1))
+    c.fill_preserve()
+    c.save()
+    c.clip()
+    if teeth > 0.05:                                     # upper teeth
+        th = (up + dn) * (0.22 + 0.25 * teeth)
+        rgb(c, (0.98, 0.97, 0.94))
+        c.rectangle(lx, my - up - 2, hw * 2, th + 2)
+        c.fill()
+        if teeth > 0.6 and h < 0.5:                      # lower teeth for i / e
+            rgb(c, (0.93, 0.92, 0.9))
+            c.rectangle(lx, my + dn - th * 0.7, hw * 2, th)
+            c.fill()
+    if h > 0.35:                                         # tongue
+        rgb(c, (0.86, 0.42, 0.45))
+        ellipse(c, cx, my + dn * 0.95, hw * 0.62, dn * 0.5)
+        c.fill()
+    c.restore()
+    outline()
+    rgb(c, (0.70, 0.30, 0.31))
+    c.set_line_width(r * (0.04 + 0.02 * rnd))
+    c.set_line_join(cairo.LINE_JOIN_ROUND)
+    c.stroke()
 
 
 def hand(c, x, y, r, skin, kind="palm", rot=0.0):
@@ -1565,7 +1756,7 @@ def build_audio(path):
     k = int(0.2 * SR)
     fg = np.convolve(fg, np.ones(k) / k, mode="same")
     bab = np.zeros(n)
-    for at, raw, kind in BABBLE:
+    for at, raw, kind, _ in BABBLE:
         add(bab, fx(raw, kind), at)
     vo += bab * (1 - 0.82 * fg)
 
@@ -1670,6 +1861,7 @@ def render(preview=None):
         for sc in SCENES:
             if sc["t0"] <= T < sc["t0"] + sc["dur"] or sc is SCENES[-1]:
                 t = T - sc["t0"]
+                SCENE_T0[0] = sc["t0"]
                 c.save()
                 c.set_operator(cairo.OPERATOR_SOURCE)
                 c.set_source_rgb(0, 0, 0)
